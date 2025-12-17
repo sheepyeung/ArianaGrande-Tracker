@@ -168,46 +168,68 @@ def standardize_columns(df, is_album=False):
 DATA_DIR = "daily_data"
 
 @st.cache_data(ttl=600)
-def load_latest_data():
-    """查找并加载最新的 songs, albums 和 meta 文件"""
+def load_data_pair():
+    """加载今日数据和昨日数据，用于计算差异"""
     if not os.path.exists(DATA_DIR):
-        return None, None, None, None
+        return None, None, None, None, None, None
 
     # 获取所有 songs 文件并排序
     song_files = sorted(glob.glob(os.path.join(DATA_DIR, "*_songs.csv")))
     
     if not song_files:
-        return None, None, None, None
+        return None, None, None, None, None, None
 
+    # 1. 加载最新文件 (Today)
     latest_song_file = song_files[-1]
     date_str = os.path.basename(latest_song_file).split('_')[0]
     
-    # 构造对应的其他文件名
     latest_meta_file = os.path.join(DATA_DIR, f"{date_str}_meta.json")
     latest_album_file = os.path.join(DATA_DIR, f"{date_str}_albums.csv")
     
-    # 尝试加载
     try:
-        # 1. 加载 Songs
+        # Today Songs
         df_songs = pd.read_csv(latest_song_file)
         df_songs['Song'] = df_songs['Song'].apply(normalize_text)
         df_songs = standardize_columns(df_songs, is_album=False)
         
-        # 2. 加载 Meta
+        # Today Meta
         with open(latest_meta_file, 'r') as f:
             meta_data = json.load(f)
             
-        # 3. 加载 Albums
+        # Today Albums
         if os.path.exists(latest_album_file):
             df_albums = pd.read_csv(latest_album_file)
             df_albums = standardize_columns(df_albums, is_album=True)
         else:
             df_albums = None
             
-        return df_songs, df_albums, meta_data, date_str
+        # 2. 尝试加载前一天文件 (Yesterday) 用于计算 Change
+        df_songs_prev = None
+        df_albums_prev = None
+        
+        if len(song_files) >= 2:
+            prev_song_file = song_files[-2]
+            prev_date_str = os.path.basename(prev_song_file).split('_')[0]
+            prev_album_file = os.path.join(DATA_DIR, f"{prev_date_str}_albums.csv")
+            
+            try:
+                # Prev Songs
+                df_songs_prev = pd.read_csv(prev_song_file)
+                df_songs_prev['Song'] = df_songs_prev['Song'].apply(normalize_text)
+                df_songs_prev = standardize_columns(df_songs_prev, is_album=False)
+                
+                # Prev Albums
+                if os.path.exists(prev_album_file):
+                    df_albums_prev = pd.read_csv(prev_album_file)
+                    df_albums_prev = standardize_columns(df_albums_prev, is_album=True)
+            except:
+                pass # 如果加载旧文件失败，忽略，Change显示为0
+            
+        return df_songs, df_albums, meta_data, date_str, df_songs_prev, df_albums_prev
+        
     except Exception as e:
         st.error(f"Error loading files for {date_str}: {e}")
-        return None, None, None, None
+        return None, None, None, None, None, None
 
 @st.cache_data(ttl=3600)
 def get_career_history():
@@ -321,7 +343,7 @@ def generate_random_predictions(df_songs, df_albums):
 
 # --- 6. UI 主程序 ---
 with st.sidebar:
-    st.markdown("### 🦋 Ari-Stats 30.2 (Fix)")
+    st.markdown("### 🦋 Ari-Stats 30.3 (Change)")
     st.caption(f"Theme: **{theme_name}**")
     theme_img = THEME_IMAGE_MAP.get(theme_name)
     if theme_img and os.path.exists(theme_img): st.image(theme_img, caption=f"{theme_name} Era", use_container_width=True)
@@ -330,19 +352,37 @@ with st.sidebar:
 
 st.title(f"✨ Ariana Grande Data Universe ✨")
 
-# 加载数据
-final_songs_df, final_albums_df, today_meta, data_date = load_latest_data()
+# 加载数据 (包含昨日数据)
+final_songs_df, final_albums_df, today_meta, data_date, prev_songs_df, prev_albums_df = load_data_pair()
 
 if final_songs_df is not None and today_meta is not None:
     
-    # --- 🔥 关键修复：在此处对数据进行强制排序，确保后续切片正确 ---
+    # --- 1. 计算单曲较昨日变化 (Change) ---
+    if prev_songs_df is not None:
+        # 合并今日和昨日数据，计算 Delta
+        merged_songs = pd.merge(final_songs_df, prev_songs_df[['Song', 'Daily_Num']], on='Song', how='left', suffixes=('', '_Prev'))
+        merged_songs['Daily_Num_Prev'] = merged_songs['Daily_Num_Prev'].fillna(0) # 如果昨日无数据，视为0
+        merged_songs['Change'] = merged_songs['Daily_Num'] - merged_songs['Daily_Num_Prev']
+        final_songs_df = merged_songs
+    else:
+        final_songs_df['Change'] = 0
+
+    # --- 2. 关键修复：排序 ---
     # 按照日增量从大到小排序，并重置索引
     final_songs_df = final_songs_df.sort_values(by='Daily_Num', ascending=False).reset_index(drop=True)
     
+    # --- 3. 计算专辑较昨日变化 (Change) ---
+    if final_albums_df is not None:
+        if prev_albums_df is not None:
+            merged_albums = pd.merge(final_albums_df, prev_albums_df[['Base_Name', 'Daily_Num']], on='Base_Name', how='left', suffixes=('', '_Prev'))
+            merged_albums['Daily_Num_Prev'] = merged_albums['Daily_Num_Prev'].fillna(0)
+            merged_albums['Change'] = merged_albums['Daily_Num'] - merged_albums['Daily_Num_Prev']
+            final_albums_df = merged_albums
+        else:
+            final_albums_df['Change'] = 0
+    
     # 核心数据计算
     career_total = today_meta.get('career_total', 0)
-    
-    # 计算今日总增量 (使用标准化后的 Daily_Num)
     real_career_daily = final_songs_df['Daily_Num'].sum()
 
     # 计算 Listeners 变化
@@ -398,13 +438,9 @@ if final_songs_df is not None and today_meta is not None:
             st.plotly_chart(fig_l, use_container_width=True)
         else: st.caption("暂无历史数据")
     
-    # 由于已经全局排序，这里直接取第一行就是最佳日增
     top_song_d = final_songs_df.iloc[0]
-    
-    # 总量冠军需要重新按总量排序获取
     top_song_t = final_songs_df.sort_values('Streams_Num', ascending=False).iloc[0]
     
-    # --- 核心UI ---
     c1, c2, c3, c4, c5, c6 = st.columns(6)
     
     with c1: 
@@ -474,17 +510,20 @@ if final_songs_df is not None and today_meta is not None:
             final_songs_df['Share'] = (final_songs_df['Daily_Num'] / real_career_daily * 100).round(2).astype(str) + '%'
         else: final_songs_df['Share'] = "0%"
         
-        # 因为在上面已经全局排序了，所以这里取 head(150) 拿到的绝对是日增最高的前150首
         sub_df = final_songs_df.head(150)
         
         fig = px.bar(sub_df.head(10), x='Daily_Num', y='Song', orientation='h', text='Daily_Num', color='Daily_Num', color_continuous_scale=color_map)
         fig.update_layout(yaxis={'categoryorder':'total ascending'}, plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', font=dict(family="Times New Roman"))
         st.plotly_chart(fig, use_container_width=True, key="chart_songs_daily")
         
-        disp_cols = ['Song','Daily_Num','Share']
-        if 'Change' in sub_df.columns: disp_cols.insert(2, 'Change')
-        
-        st.dataframe(sub_df[disp_cols], use_container_width=True)
+        # 显示 Change 列
+        st.dataframe(
+            sub_df[['Song','Daily_Num','Change','Share']], 
+            use_container_width=True,
+            column_config={
+                "Change": st.column_config.NumberColumn("较昨日变化", format="%+d")
+            }
+        )
 
     with tab2:
         st.markdown("#### 💎 单曲总榜")
@@ -503,7 +542,6 @@ if final_songs_df is not None and today_meta is not None:
             return goal_str
 
         final_songs_df['Next_Milestone'] = final_songs_df.apply(format_milestone_prediction, axis=1)
-        # 这里需要按总流媒重新排序
         sub_df = final_songs_df.sort_values('Streams_Num', ascending=False).head(150)
         fig = px.bar(sub_df.head(10), x='Streams_Num', y='Song', orientation='h', text='Streams_Num', color='Streams_Num', color_continuous_scale='Turbo')
         fig.update_layout(yaxis={'categoryorder':'total ascending'}, plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', font=dict(family="Times New Roman"))
@@ -530,9 +568,14 @@ if final_songs_df is not None and today_meta is not None:
             fig.update_traces(texttemplate='%{text:.2s}', textposition='outside') 
             st.plotly_chart(fig, use_container_width=True, key="chart_albums_daily")
             
-            disp_cols_alb = ['Base_Name','Daily_Num','Daily_Share']
-            if 'Change' in sub_df.columns: disp_cols_alb.insert(2, 'Change')
-            st.dataframe(sub_df[disp_cols_alb], use_container_width=True)
+            # 显示 Change 列
+            st.dataframe(
+                sub_df[['Base_Name','Daily_Num','Change','Daily_Share']], 
+                use_container_width=True,
+                column_config={
+                    "Change": st.column_config.NumberColumn("较昨日变化", format="%+d")
+                }
+            )
 
         with tab4:
             st.markdown("#### 🏛️ 专辑总榜")
