@@ -321,7 +321,7 @@ def generate_random_predictions(df_songs, df_albums):
 
 # --- 6. UI 主程序 ---
 with st.sidebar:
-    st.markdown("### 🦋 Ari-Stats 30.1 (Fix)")
+    st.markdown("### 🦋 Ari-Stats 30.2 (Fix)")
     st.caption(f"Theme: **{theme_name}**")
     theme_img = THEME_IMAGE_MAP.get(theme_name)
     if theme_img and os.path.exists(theme_img): st.image(theme_img, caption=f"{theme_name} Era", use_container_width=True)
@@ -334,6 +334,10 @@ st.title(f"✨ Ariana Grande Data Universe ✨")
 final_songs_df, final_albums_df, today_meta, data_date = load_latest_data()
 
 if final_songs_df is not None and today_meta is not None:
+    
+    # --- 🔥 关键修复：在此处对数据进行强制排序，确保后续切片正确 ---
+    # 按照日增量从大到小排序，并重置索引
+    final_songs_df = final_songs_df.sort_values(by='Daily_Num', ascending=False).reset_index(drop=True)
     
     # 核心数据计算
     career_total = today_meta.get('career_total', 0)
@@ -394,7 +398,10 @@ if final_songs_df is not None and today_meta is not None:
             st.plotly_chart(fig_l, use_container_width=True)
         else: st.caption("暂无历史数据")
     
-    top_song_d = final_songs_df.sort_values('Daily_Num', ascending=False).iloc[0]
+    # 由于已经全局排序，这里直接取第一行就是最佳日增
+    top_song_d = final_songs_df.iloc[0]
+    
+    # 总量冠军需要重新按总量排序获取
     top_song_t = final_songs_df.sort_values('Streams_Num', ascending=False).iloc[0]
     
     # --- 核心UI ---
@@ -466,7 +473,10 @@ if final_songs_df is not None and today_meta is not None:
         if real_career_daily > 0:
             final_songs_df['Share'] = (final_songs_df['Daily_Num'] / real_career_daily * 100).round(2).astype(str) + '%'
         else: final_songs_df['Share'] = "0%"
+        
+        # 因为在上面已经全局排序了，所以这里取 head(150) 拿到的绝对是日增最高的前150首
         sub_df = final_songs_df.head(150)
+        
         fig = px.bar(sub_df.head(10), x='Daily_Num', y='Song', orientation='h', text='Daily_Num', color='Daily_Num', color_continuous_scale=color_map)
         fig.update_layout(yaxis={'categoryorder':'total ascending'}, plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', font=dict(family="Times New Roman"))
         st.plotly_chart(fig, use_container_width=True, key="chart_songs_daily")
@@ -493,6 +503,7 @@ if final_songs_df is not None and today_meta is not None:
             return goal_str
 
         final_songs_df['Next_Milestone'] = final_songs_df.apply(format_milestone_prediction, axis=1)
+        # 这里需要按总流媒重新排序
         sub_df = final_songs_df.sort_values('Streams_Num', ascending=False).head(150)
         fig = px.bar(sub_df.head(10), x='Streams_Num', y='Song', orientation='h', text='Streams_Num', color='Streams_Num', color_continuous_scale='Turbo')
         fig.update_layout(yaxis={'categoryorder':'total ascending'}, plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', font=dict(family="Times New Roman"))
