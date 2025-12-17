@@ -126,7 +126,45 @@ def clean_number(x):
     try: return int(str(x).replace(',', '').replace('+', '').split('.')[0])
     except: return 0
 
-# --- 数据加载引擎 (修改为纯读取) ---
+def standardize_columns(df, is_album=False):
+    """
+    统一列名，解决 Daily Raw, Daily_Raw, Daily 等不一致问题。
+    强制生成 'Daily_Num' 和 'Total_Num' (如果是专辑) 列。
+    """
+    if df is None: return None
+    
+    # 统一 Daily 列
+    if 'Daily_Num' not in df.columns:
+        if 'Daily_Raw' in df.columns:
+            df['Daily_Num'] = df['Daily_Raw'].apply(clean_number)
+        elif 'Daily Raw' in df.columns:
+            df['Daily_Num'] = df['Daily Raw'].apply(clean_number)
+        elif 'Daily' in df.columns:
+            df['Daily_Num'] = df['Daily'].apply(clean_number)
+        else:
+            df['Daily_Num'] = 0
+            
+    # 如果是专辑，统一 Total 列
+    if is_album:
+        if 'Total_Num' not in df.columns:
+            if 'Total' in df.columns:
+                df['Total_Num'] = df['Total'].apply(clean_number)
+            elif 'Streams' in df.columns: # 有时专辑总流媒列名为 Streams
+                df['Total_Num'] = df['Streams'].apply(clean_number)
+            else:
+                df['Total_Num'] = 0
+                
+    # 如果是单曲，确保 Streams_Num
+    if not is_album:
+         if 'Streams_Num' not in df.columns:
+            if 'Streams' in df.columns:
+                df['Streams_Num'] = df['Streams'].apply(clean_number)
+            else:
+                df['Streams_Num'] = 0
+                
+    return df
+
+# --- 数据加载引擎 ---
 DATA_DIR = "daily_data"
 
 @st.cache_data(ttl=600)
@@ -135,7 +173,7 @@ def load_latest_data():
     if not os.path.exists(DATA_DIR):
         return None, None, None, None
 
-    # 获取所有 songs 文件并排序（文件名是日期开头，排序即可找到最新）
+    # 获取所有 songs 文件并排序
     song_files = sorted(glob.glob(os.path.join(DATA_DIR, "*_songs.csv")))
     
     if not song_files:
@@ -150,15 +188,19 @@ def load_latest_data():
     
     # 尝试加载
     try:
+        # 1. 加载 Songs
         df_songs = pd.read_csv(latest_song_file)
-        # 标准化处理
         df_songs['Song'] = df_songs['Song'].apply(normalize_text)
+        df_songs = standardize_columns(df_songs, is_album=False)
         
+        # 2. 加载 Meta
         with open(latest_meta_file, 'r') as f:
             meta_data = json.load(f)
             
+        # 3. 加载 Albums
         if os.path.exists(latest_album_file):
             df_albums = pd.read_csv(latest_album_file)
+            df_albums = standardize_columns(df_albums, is_album=True)
         else:
             df_albums = None
             
@@ -198,9 +240,13 @@ def get_item_history(item_name, is_album=False):
         try:
             df = pd.read_csv(f)
             if not is_album: df[col_name] = df[col_name].apply(normalize_text)
+            
+            # 临时标准化以获取数据
+            df = standardize_columns(df, is_album=is_album)
+            
             row = df[df[col_name] == item_name]
             if not row.empty:
-                val = row.iloc[0]['Daily_Num'] if 'Daily_Num' in row.columns else row.iloc[0]['Daily_Raw']
+                val = row.iloc[0]['Daily_Num']
                 history.append({'Date': date_str, 'Daily': val})
         except: continue
     return pd.DataFrame(history)
@@ -232,10 +278,8 @@ def get_7day_average():
         try:
             df = pd.read_csv(f)
             df['Song'] = df['Song'].apply(normalize_text)
-            # 优先使用 Daily_Num (计算值), 其次 Daily_Raw
-            val_col = 'Daily_Num' if 'Daily_Num' in df.columns else 'Daily_Raw'
-            df[val_col] = df[val_col].apply(clean_number)
-            all_dailies.append(df[['Song', val_col]].rename(columns={val_col: 'Daily'}))
+            df = standardize_columns(df, is_album=False)
+            all_dailies.append(df[['Song', 'Daily_Num']].rename(columns={'Daily_Num': 'Daily'}))
         except: pass
     if not all_dailies: return {}
     big_df = pd.concat(all_dailies)
@@ -277,7 +321,7 @@ def generate_random_predictions(df_songs, df_albums):
 
 # --- 6. UI 主程序 ---
 with st.sidebar:
-    st.markdown("### 🦋 Ari-Stats 30.0 (Cloud)")
+    st.markdown("### 🦋 Ari-Stats 30.1 (Fix)")
     st.caption(f"Theme: **{theme_name}**")
     theme_img = THEME_IMAGE_MAP.get(theme_name)
     if theme_img and os.path.exists(theme_img): st.image(theme_img, caption=f"{theme_name} Era", use_container_width=True)
@@ -294,19 +338,12 @@ if final_songs_df is not None and today_meta is not None:
     # 核心数据计算
     career_total = today_meta.get('career_total', 0)
     
-    # 尝试计算较昨日变化 (如果存在前一天的数据)
-    real_career_daily = 0
-    real_listeners_change = 0
-    
-    # 简易计算今日增量 (求和 Daily_Num)
-    if 'Daily_Num' in final_songs_df.columns:
-        real_career_daily = final_songs_df['Daily_Num'].sum()
-    else:
-        # 兼容旧格式
-        real_career_daily = final_songs_df['Daily_Raw'].sum() if 'Daily_Raw' in final_songs_df.columns else 0
+    # 计算今日总增量 (使用标准化后的 Daily_Num)
+    real_career_daily = final_songs_df['Daily_Num'].sum()
 
-    # 计算 Listeners 变化 (需要读取历史)
+    # 计算 Listeners 变化
     l_hist = get_listeners_history()
+    real_listeners_change = 0
     if len(l_hist) >= 2:
         try:
             curr_l = l_hist.iloc[-1]['Listeners']
@@ -330,7 +367,7 @@ if final_songs_df is not None and today_meta is not None:
     l_rank = today_meta.get('listeners_rank', 0)
     l_peak = today_meta.get('listeners_peak', 0)
     l_pk_c = today_meta.get('listeners_pk_count', 0)
-    if isinstance(l_count, dict): l_count = l_count.get('count', 0) # 兼容
+    if isinstance(l_count, dict): l_count = l_count.get('count', 0) 
     
     listeners_html = (
         f"<div style='margin-top: 15px; padding-top: 15px; border-top: 1px dashed {primary_color}80;'>"
