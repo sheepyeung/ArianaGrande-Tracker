@@ -241,7 +241,6 @@ def get_7day_average():
     big_df = pd.concat(all_dailies)
     return big_df.groupby('Song')['Daily'].mean().to_dict()
 
-# --- 新增：专辑7日平均计算函数 ---
 @st.cache_data(ttl=3600)
 def get_album_7day_average():
     """计算专辑过去7天的平均日增量"""
@@ -318,11 +317,32 @@ if final_songs_df is not None and today_meta is not None:
             real_listeners_change = curr_l - prev_l
         except: pass
 
-    # 专辑份额计算
+    # 专辑份额计算 - 修复 KeyError 问题
     if final_albums_df is not None:
+        # 1. 确保存在 Daily_Num
+        if 'Daily_Num' not in final_albums_df.columns:
+            if 'Daily_Raw' in final_albums_df.columns:
+                final_albums_df['Daily_Num'] = final_albums_df['Daily_Raw'].apply(clean_number)
+            else:
+                final_albums_df['Daily_Num'] = 0 # 极端兜底
+        else:
+             # 确保已清洗为数字
+             final_albums_df['Daily_Num'] = final_albums_df['Daily_Num'].apply(clean_number)
+        
+        # 2. 确保存在 Total_Num
+        if 'Total_Num' not in final_albums_df.columns:
+             if 'Total_Raw' in final_albums_df.columns:
+                 final_albums_df['Total_Num'] = final_albums_df['Total_Raw'].apply(clean_number)
+             else:
+                 final_albums_df['Total_Num'] = 0
+        else:
+             final_albums_df['Total_Num'] = final_albums_df['Total_Num'].apply(clean_number)
+
+        # 3. 计算份额
         if real_career_daily > 0: 
             final_albums_df['Daily_Share'] = (final_albums_df['Daily_Num'] / real_career_daily * 100).round(2).astype(str) + '%'
         else: final_albums_df['Daily_Share'] = "0%"
+        
         if career_total > 0:
             final_albums_df['Total_Share'] = (final_albums_df['Total_Num'] / career_total * 100).round(2).astype(str) + '%'
         else: final_albums_df['Total_Share'] = "0%"
