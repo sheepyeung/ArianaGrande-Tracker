@@ -126,7 +126,7 @@ def clean_number(x):
     try: return int(str(x).replace(',', '').replace('+', '').split('.')[0])
     except: return 0
 
-# --- 数据加载引擎 ---
+# --- 数据加载引擎 (修改为纯读取) ---
 DATA_DIR = "daily_data"
 
 @st.cache_data(ttl=600)
@@ -241,32 +241,6 @@ def get_7day_average():
     big_df = pd.concat(all_dailies)
     return big_df.groupby('Song')['Daily'].mean().to_dict()
 
-@st.cache_data(ttl=3600)
-def get_album_7day_average():
-    """计算专辑过去7天的平均日增量"""
-    if not os.path.exists(DATA_DIR): return {}
-    files = sorted(glob.glob(os.path.join(DATA_DIR, "*_albums.csv")))
-    recent_files = files[-7:]
-    
-    if len(recent_files) < 2: return {}
-    
-    all_dailies = []
-    for f in recent_files:
-        try:
-            df = pd.read_csv(f)
-            if 'Daily_Num' in df.columns: val_col = 'Daily_Num'
-            elif 'Daily_Raw' in df.columns: val_col = 'Daily_Raw'
-            else: continue
-            
-            clean_df = df[['Base_Name', val_col]].rename(columns={val_col: 'Daily'})
-            clean_df['Daily'] = clean_df['Daily'].apply(clean_number)
-            all_dailies.append(clean_df)
-        except: pass
-        
-    if not all_dailies: return {}
-    big_df = pd.concat(all_dailies)
-    return big_df.groupby('Base_Name')['Daily'].mean().to_dict()
-
 def get_spotify_card_html(label, song_name, value_text):
     query = f"Ariana Grande {song_name}"
     link = f"https://open.spotify.com/search/{urllib.parse.quote(query)}"
@@ -277,6 +251,29 @@ def get_spotify_card_html(label, song_name, value_text):
         <span class="card-val">{value_text}</span>
     </a>
     """
+
+def generate_random_predictions(df_songs, df_albums):
+    pool = []
+    if df_albums is not None and not df_albums.empty:
+        alb_sorted = df_albums.sort_values('Total_Num', ascending=False).reset_index(drop=True)
+        for i in range(len(alb_sorted)-1):
+            leader = alb_sorted.iloc[i]
+            chaser = alb_sorted.iloc[i+1]
+            gap = leader['Total_Num'] - chaser['Total_Num']
+            speed = chaser.get('Daily_Num', 0) - leader.get('Daily_Num', 0)
+            if speed > 0 and gap > 0:
+                days = gap / speed
+                if days < 2000:
+                    pool.append((f"💿 {chaser['Base_Name']} 🚀 {leader['Base_Name']}", f"差距 {gap//1000000}M | 约 {int(days)} 天"))
+    for _, row in df_songs.head(50).iterrows():
+        curr, inc = row['Streams_Num'], row.get('Daily_Num', 0)
+        if inc > 0:
+            next_goal = ((curr // 100000000) + 1) * 100000000
+            days = (next_goal - curr) / inc
+            if days < 365:
+                pool.append((f"🎵 {row['Song']} ✨ {next_goal/100000000:.1f}亿", f"还差 {(next_goal-curr)//1000}k | 约 {int(days)} 天"))
+    if len(pool) > 12: return random.sample(pool, 12)
+    else: return pool
 
 # --- 6. UI 主程序 ---
 with st.sidebar:
@@ -317,32 +314,11 @@ if final_songs_df is not None and today_meta is not None:
             real_listeners_change = curr_l - prev_l
         except: pass
 
-    # 专辑份额计算 - 修复 KeyError 问题
+    # 专辑份额计算
     if final_albums_df is not None:
-        # 1. 确保存在 Daily_Num
-        if 'Daily_Num' not in final_albums_df.columns:
-            if 'Daily_Raw' in final_albums_df.columns:
-                final_albums_df['Daily_Num'] = final_albums_df['Daily_Raw'].apply(clean_number)
-            else:
-                final_albums_df['Daily_Num'] = 0 # 极端兜底
-        else:
-             # 确保已清洗为数字
-             final_albums_df['Daily_Num'] = final_albums_df['Daily_Num'].apply(clean_number)
-        
-        # 2. 确保存在 Total_Num
-        if 'Total_Num' not in final_albums_df.columns:
-             if 'Total_Raw' in final_albums_df.columns:
-                 final_albums_df['Total_Num'] = final_albums_df['Total_Raw'].apply(clean_number)
-             else:
-                 final_albums_df['Total_Num'] = 0
-        else:
-             final_albums_df['Total_Num'] = final_albums_df['Total_Num'].apply(clean_number)
-
-        # 3. 计算份额
         if real_career_daily > 0: 
             final_albums_df['Daily_Share'] = (final_albums_df['Daily_Num'] / real_career_daily * 100).round(2).astype(str) + '%'
         else: final_albums_df['Daily_Share'] = "0%"
-        
         if career_total > 0:
             final_albums_df['Total_Share'] = (final_albums_df['Total_Num'] / career_total * 100).round(2).astype(str) + '%'
         else: final_albums_df['Total_Share'] = "0%"
@@ -422,77 +398,14 @@ if final_songs_df is not None and today_meta is not None:
 
     st.divider()
 
-    # --- 新版：未来水晶球 (Next 100M Milestone) ---
-    st.subheader("🔮 专辑里程碑预测 (Next 100M Milestone)")
-    
-    alb_avg_map = get_album_7day_average()
-    
-    target_albums_map = {
-        "Yours Truly": "Yours Truly",
-        "My Everything": "My Everything",
-        "Dangerous Woman": "Dangerous Woman",
-        "Sweetener": "Sweetener",
-        "thank u, next": "thank u, next",
-        "Positions (Deluxe)": "Positions", 
-        "eternal sunshine": "eternal sunshine"
-    }
-    
-    if final_albums_df is not None and not final_albums_df.empty:
-        cols = st.columns(2)
-        idx = 0
-        for display_name, keyword in target_albums_map.items():
-            row = final_albums_df[final_albums_df['Base_Name'].str.contains(keyword, case=False, na=False)]
-            
-            if not row.empty:
-                album_data = row.iloc[0]
-                current_total = album_data['Total_Num']
-                real_name = album_data['Base_Name']
-                
-                # 获取平均速度，若无则降级为当日速度
-                avg_speed = alb_avg_map.get(real_name, album_data.get('Daily_Num', 0))
-                
-                next_milestone = (int(current_total / 100_000_000) + 1) * 100_000_000
-                remaining = next_milestone - current_total
-                
-                prev_milestone = next_milestone - 100_000_000
-                progress = (current_total - prev_milestone) / 100_000_000
-                if progress < 0: progress = 0
-                if progress > 1: progress = 1
-                
-                days_left = "♾️"
-                if avg_speed > 0:
-                    days_calc = remaining / avg_speed
-                    days_left = f"{int(days_calc)} 天"
-                
-                spotify_query = f"Ariana Grande {real_name} album"
-                spotify_link = f"https://open.spotify.com/search/{urllib.parse.quote(spotify_query)}"
-                
-                with cols[idx % 2]:
-                    st.markdown(f"""
-                    <div style="
-                        background: rgba(255,255,255,0.7); 
-                        border-left: 4px solid {primary_color};
-                        padding: 15px; border-radius: 10px; margin-bottom: 15px;
-                        box-shadow: 0 2px 10px rgba(0,0,0,0.05);">
-                        <div style="display:flex; justify-content:space-between; align-items:center;">
-                            <span style="font-size: 18px; font-weight: bold; color: {primary_color};">💿 {display_name}</span>
-                            <a href="{spotify_link}" target="_blank" style="text-decoration:none; font-size:12px; background:{secondary_color}40; padding:2px 8px; border-radius:10px; color:#333;">▶ Play</a>
-                        </div>
-                        <div style="font-size: 14px; color: #555; margin-top: 5px;">
-                            当前: {current_total/1_000_000_000:.3f}B <span style="color:#aaa;">→</span> 目标: {next_milestone/1_000_000_000:.1f}B
-                        </div>
-                        <div style="margin: 8px 0;">
-                            <div style="background: #ddd; height: 6px; border-radius: 3px; width: 100%;">
-                                <div style="background: {primary_color}; width: {progress*100}%; height: 100%; border-radius: 3px;"></div>
-                            </div>
-                        </div>
-                        <div style="display:flex; justify-content:space-between; font-size: 13px;">
-                            <span>还需: {remaining:,}</span>
-                            <span>预计: <b>{days_left}</b> (基于7日均值)</span>
-                        </div>
-                    </div>
-                    """, unsafe_allow_html=True)
-                idx += 1
+    st.subheader("🔮 未来水晶球")
+    preds = generate_random_predictions(final_songs_df, final_albums_df)
+    if preds:
+        chunk = 4
+        for i in range(0, len(preds), chunk):
+            cols = st.columns(chunk)
+            for j, (t, s) in enumerate(preds[i:i+chunk]):
+                with cols[j]: st.info(f"**{t}**\n\n_{s}_")
     
     st.divider()
 
