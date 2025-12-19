@@ -44,7 +44,8 @@ st.markdown(f"""
     .stApp, p, h1, h2, h3, h4, h5, h6, .stMarkdown, .stDataFrame, .stMetric, button, input, a {{
         font-family: 'Times New Roman', Times, serif !important;
     }}
-    div[data-testid="stMetricValue"], div[data-testid="stMetricDelta"] {{
+    /* Metric 数字、标签字体强制修正 */
+    div[data-testid="stMetricValue"], div[data-testid="stMetricDelta"], div[data-testid="stMetricLabel"] {{
         font-family: 'Times New Roman', Times, serif !important;
     }}
     i, .material-icons, [data-testid="stExpanderToggleIcon"] {{
@@ -54,7 +55,7 @@ st.markdown(f"""
     .stApp {{ background: linear-gradient(to bottom, {secondary_color}25, #ffffff); background-attachment: fixed; }}
     /* 标题颜色 */
     h1, h2, h3, h4 {{ color: {primary_color} !important; text-shadow: 1px 1px 2px rgba(255,255,255,0.8); }}
-    
+     
     /* Metric 卡片样式 */
     div[data-testid="stMetric"] {{
         background: rgba(255, 255, 255, 0.8);
@@ -66,12 +67,13 @@ st.markdown(f"""
         backdrop-filter: blur(10px);
         transition: transform 0.3s ease, box-shadow 0.3s ease;
         height: 100%;
+        font-family: 'Times New Roman', Times, serif !important;
     }}
     div[data-testid="stMetric"]:hover {{
         transform: translateY(-3px);
         box-shadow: 0 8px 25px rgba(0,0,0,0.1);
     }}
-    
+     
     /* Big Stat Banner */
     .big-stat {{
         background: linear-gradient(to right, rgba(255,255,255,0.95), {secondary_color}30, rgba(255,255,255,0.95));
@@ -84,7 +86,7 @@ st.markdown(f"""
     }}
     .sub-stat {{ font-size: 18px; color: #555; display: block; margin-top: 5px; font-family: 'Times New Roman', serif !important; }}
     .date-stat {{ font-size: 14px; color: #888; display: block; margin-top: 15px; font-weight: normal; font-family: 'Times New Roman', serif !important; }}
-    
+     
     .spotify-card {{
         background: white; border: 1px solid {primary_color}; border-radius: 8px;
         padding: 10px; text-align: center; text-decoration: none; color: #333;
@@ -92,7 +94,7 @@ st.markdown(f"""
         font-family: 'Times New Roman', serif !important;
     }}
     .spotify-card:hover {{ background: {secondary_color}40; transform: translateY(-2px); }}
-    
+     
     .media-btn {{
         display: inline-block; padding: 10px 20px; margin: 5px;
         border-radius: 20px; text-decoration: none; color: white; font-weight: bold;
@@ -132,7 +134,7 @@ def standardize_columns(df, is_album=False):
     强制生成 'Daily_Num' 和 'Total_Num' (如果是专辑) 列。
     """
     if df is None: return None
-    
+     
     # 统一 Daily 列
     if 'Daily_Num' not in df.columns:
         if 'Daily_Raw' in df.columns:
@@ -143,7 +145,7 @@ def standardize_columns(df, is_album=False):
             df['Daily_Num'] = df['Daily'].apply(clean_number)
         else:
             df['Daily_Num'] = 0
-            
+             
     # 如果是专辑，统一 Total 列
     if is_album:
         if 'Total_Num' not in df.columns:
@@ -153,7 +155,7 @@ def standardize_columns(df, is_album=False):
                 df['Total_Num'] = df['Streams'].apply(clean_number)
             else:
                 df['Total_Num'] = 0
-                
+                 
     # 如果是单曲，确保 Streams_Num
     if not is_album:
          if 'Streams_Num' not in df.columns:
@@ -161,7 +163,7 @@ def standardize_columns(df, is_album=False):
                 df['Streams_Num'] = df['Streams'].apply(clean_number)
             else:
                 df['Streams_Num'] = 0
-                
+                 
     return df
 
 # --- 数据加载引擎 ---
@@ -173,9 +175,9 @@ def get_album_7day_average(album_base_name):
     if not os.path.exists(DATA_DIR): return 0
     files = sorted(glob.glob(os.path.join(DATA_DIR, "*_albums.csv")))
     recent_files = files[-7:]
-    
+     
     if not recent_files: return 0
-    
+     
     dailies = []
     for f in recent_files:
         try:
@@ -194,12 +196,12 @@ def get_album_7day_average(album_base_name):
 def calculate_milestone_projection_1B(current_total, avg_daily):
     """计算下一个 10亿级 (1B) 里程碑"""
     if current_total <= 0: return None
-    
+     
     billions_threshold = 1_000_000_000
     next_milestone = ((current_total // billions_threshold) + 1) * billions_threshold
-    
+     
     remaining = next_milestone - current_total
-    
+     
     if avg_daily <= 0:
         return {
             "milestone": next_milestone,
@@ -207,10 +209,10 @@ def calculate_milestone_projection_1B(current_total, avg_daily):
             "days": float('inf'),
             "date_str": "Unknown"
         }
-        
+         
     days_needed = remaining / avg_daily
     future_date = datetime.now() + pd.Timedelta(days=days_needed)
-    
+     
     return {
         "milestone": next_milestone,
         "remaining": remaining,
@@ -226,17 +228,17 @@ def load_data_pair():
 
     # 获取所有 songs 文件并排序
     song_files = sorted(glob.glob(os.path.join(DATA_DIR, "*_songs.csv")))
-    
+     
     if not song_files:
         return None, None, None, None, None, None
 
     # 1. 加载最新文件 (Today)
     latest_song_file = song_files[-1]
     date_str = os.path.basename(latest_song_file).split('_')[0]
-    
+     
     latest_meta_file = os.path.join(DATA_DIR, f"{date_str}_meta.json")
     latest_album_file = os.path.join(DATA_DIR, f"{date_str}_albums.csv")
-    
+     
     try:
         # Today Songs
         df_songs = pd.read_csv(latest_song_file)
@@ -397,7 +399,7 @@ if final_songs_df is not None and today_meta is not None:
 
     # --- 2. 排序 ---
     final_songs_df = final_songs_df.sort_values(by='Daily_Num', ascending=False).reset_index(drop=True)
-    
+     
     # --- 3. 计算专辑较昨日变化 (Change) ---
     if final_albums_df is not None:
         if prev_albums_df is not None:
@@ -407,7 +409,7 @@ if final_songs_df is not None and today_meta is not None:
             final_albums_df = merged_albums
         else:
             final_albums_df['Change'] = 0
-    
+     
     # 核心数据计算
     career_total = today_meta.get('career_total', 0)
     real_career_daily = final_songs_df['Daily_Num'].sum()
@@ -433,13 +435,13 @@ if final_songs_df is not None and today_meta is not None:
 
     count_1b = len(final_songs_df[final_songs_df['Streams_Num'] >= 1_000_000_000])
     count_100m = len(final_songs_df[final_songs_df['Streams_Num'] >= 100_000_000])
-    
+     
     l_count = today_meta.get('listeners', 0)
     l_rank = today_meta.get('listeners_rank', 0)
     l_peak = today_meta.get('listeners_peak', 0)
     l_pk_c = today_meta.get('listeners_pk_count', 0)
     if isinstance(l_count, dict): l_count = l_count.get('count', 0) 
-    
+     
     listeners_html = (
         f"<div style='margin-top: 15px; padding-top: 15px; border-top: 1px dashed {primary_color}80;'>"
         f"👥 月收听人数: {l_count:,} <span style='font-size:16px; color:#555;'>(Rank #{l_rank})</span><br>"
@@ -455,7 +457,7 @@ if final_songs_df is not None and today_meta is not None:
         <span class="date-stat">📅 数据日期: {data_date} (Latest Upload)</span>
     </div>
     """, unsafe_allow_html=True)
-    
+     
     with st.expander("👥 点击查看：月收听人数历史趋势"):
         l_hist_df = get_listeners_history()
         if not l_hist_df.empty:
@@ -464,33 +466,27 @@ if final_songs_df is not None and today_meta is not None:
             fig_l.update_traces(line_color=primary_color, line_width=3)
             st.plotly_chart(fig_l, use_container_width=True)
         else: st.caption("暂无历史数据")
-    
+     
     top_song_d = final_songs_df.iloc[0]
     top_song_t = final_songs_df.sort_values('Streams_Num', ascending=False).iloc[0]
     
-    c1, c2, c3, c4, c5, c6 = st.columns(6)
-    
+    # --- 核心UI修复区域：调整为4列布局，移除“总量冠军”和“专辑收录” ---
+    c1, c2, c3, c4 = st.columns(4)
+     
     with c1: 
         st.metric("📊 日增总量", f"{real_career_daily:,}", "Updated")
 
     with c2: 
         st.metric("🔥 最佳日增", top_song_d['Song'], f"+{top_song_d['Daily_Num']:,}")
         lnk = f"https://open.spotify.com/search/{urllib.parse.quote('Ariana Grande ' + top_song_d['Song'])}"
-        st.markdown(f"<div style='text-align:center'><a href='{lnk}' target='_blank' style='text-decoration:none; color:{primary_color};font-weight:bold;font-size:14px;'>▶ Listen on Spotify</a></div>", unsafe_allow_html=True)
+        # 强制链接字体为 Times New Roman
+        st.markdown(f"<div style='text-align:center'><a href='{lnk}' target='_blank' style='text-decoration:none; color:{primary_color};font-weight:bold;font-size:14px; font-family: Times New Roman, serif;'>▶ Listen on Spotify</a></div>", unsafe_allow_html=True)
 
     with c3: 
-        st.metric("👑 总量冠军", top_song_t['Song'], f"{top_song_t['Streams_Num']:,}")
-        lnk = f"https://open.spotify.com/search/{urllib.parse.quote('Ariana Grande ' + top_song_t['Song'])}"
-        st.markdown(f"<div style='text-align:center'><a href='{lnk}' target='_blank' style='text-decoration:none; color:{primary_color};font-weight:bold;font-size:14px;'>▶ Listen on Spotify</a></div>", unsafe_allow_html=True)
-
-    if final_albums_df is not None:
-        with c4: 
-            st.metric("💿 专辑收录", "eternal sunshine (deluxe)", f"{len(final_albums_df)} 曲")
-            lnk = "https://open.spotify.com/album/5EYKrEDnKhhcNxGedaRQeK"
-            st.markdown(f"<div style='text-align:center'><a href='{lnk}' target='_blank' style='text-decoration:none; color:{primary_color};font-weight:bold;font-size:14px;'>▶ Listen on Spotify</a></div>", unsafe_allow_html=True)
-
-    with c5: st.metric("🏆 破10亿(1B)", f"{count_1b} 首")
-    with c6: st.metric("💎 破1亿(100M)", f"{count_100m} 首")
+        st.metric("🏆 破10亿(1B)", f"{count_1b} 首")
+    
+    with c4: 
+        st.metric("💎 破1亿(100M)", f"{count_100m} 首")
 
     st.write("") 
     with st.expander("📈 点击查看：生涯日增历史趋势 (Total Daily Streams History)", expanded=False):
@@ -507,7 +503,7 @@ if final_songs_df is not None and today_meta is not None:
 
     # --- 新版水晶球逻辑 (移植完成) ---
     st.subheader("🔮 未来水晶球 (Next Billion Milestones)")
-    
+     
     target_albums_map = {
         "Yours Truly": "Yours Truly",
         "My Everything": "My Everything",
@@ -520,18 +516,18 @@ if final_songs_df is not None and today_meta is not None:
 
     if final_albums_df is not None:
         crystal_ball_data = []
-        
+         
         for display_name, base_name_key in target_albums_map.items():
             row = final_albums_df[final_albums_df['Base_Name'] == base_name_key]
-            
+             
             if not row.empty:
                 current_total = row.iloc[0]['Total_Num']
                 avg_7day = get_album_7day_average(base_name_key)
                 # 如果7日数据不足，使用当日数据作为Fallback
                 if avg_7day == 0: avg_7day = row.iloc[0]['Daily_Num']
-                
+                 
                 proj = calculate_milestone_projection_1B(current_total, avg_7day)
-                
+                 
                 if proj:
                     crystal_ball_data.append({
                         "Album": base_name_key, 
@@ -543,15 +539,15 @@ if final_songs_df is not None and today_meta is not None:
                         "Days": proj['days'],
                         "Date": proj['date_str']
                     })
-        
+         
         crystal_ball_data.sort(key=lambda x: x['Total'], reverse=True)
-        
+         
         for idx, item in enumerate(crystal_ball_data):
             milestone_b_str = f"{item['Milestone'] / 1_000_000_000:.0f}B"
             remaining_str = f"{item['Remaining']:,}"
             avg_str = f"+{int(item['Avg']):,}"
             current_b_str = f"{item['Total'] / 1_000_000_000:.3f} B" 
-            
+             
             if item['Days'] < 7300: 
                 days_str = f"{int(item['Days'])} Days"
                 date_display = item['Date']
@@ -581,7 +577,7 @@ if final_songs_df is not None and today_meta is not None:
 </div>
 """
             st.markdown(card_html, unsafe_allow_html=True)
-    
+     
     st.divider()
 
     tab1, tab2, tab3, tab4 = st.tabs(["🔥 单曲日增", "💎 单曲总榜", "💿 专辑日增", "🏛️ 专辑总榜"])
