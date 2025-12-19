@@ -149,7 +149,7 @@ def standardize_columns(df, is_album=False):
         if 'Total_Num' not in df.columns:
             if 'Total' in df.columns:
                 df['Total_Num'] = df['Total'].apply(clean_number)
-            elif 'Streams' in df.columns: # 有时专辑总流媒列名为 Streams
+            elif 'Streams' in df.columns: 
                 df['Total_Num'] = df['Streams'].apply(clean_number)
             else:
                 df['Total_Num'] = 0
@@ -166,6 +166,57 @@ def standardize_columns(df, is_album=False):
 
 # --- 数据加载引擎 ---
 DATA_DIR = "daily_data"
+
+# --- 新增：水晶球核心算法 ---
+def get_album_7day_average(album_base_name):
+    """专门计算特定专辑在过去7天内的平均日增量"""
+    if not os.path.exists(DATA_DIR): return 0
+    files = sorted(glob.glob(os.path.join(DATA_DIR, "*_albums.csv")))
+    recent_files = files[-7:]
+    
+    if not recent_files: return 0
+    
+    dailies = []
+    for f in recent_files:
+        try:
+            df = pd.read_csv(f)
+            # 使用 standardize_columns 确保 Daily_Num 可用 (Daily_Num 来自 Daily_Raw)
+            df = standardize_columns(df, is_album=True)
+            row = df[df['Base_Name'] == album_base_name]
+            if not row.empty:
+                val = row.iloc[0]['Daily_Num']
+                if val > 0: dailies.append(val)
+        except: continue
+        
+    if not dailies: return 0
+    return sum(dailies) / len(dailies)
+
+def calculate_milestone_projection_1B(current_total, avg_daily):
+    """计算下一个 10亿级 (1B) 里程碑"""
+    if current_total <= 0: return None
+    
+    billions_threshold = 1_000_000_000
+    next_milestone = ((current_total // billions_threshold) + 1) * billions_threshold
+    
+    remaining = next_milestone - current_total
+    
+    if avg_daily <= 0:
+        return {
+            "milestone": next_milestone,
+            "remaining": remaining,
+            "days": float('inf'),
+            "date_str": "Unknown"
+        }
+        
+    days_needed = remaining / avg_daily
+    future_date = datetime.now() + pd.Timedelta(days=days_needed)
+    
+    return {
+        "milestone": next_milestone,
+        "remaining": remaining,
+        "days": days_needed,
+        "date_str": future_date.strftime("%Y-%m-%d")
+    }
 
 @st.cache_data(ttl=600)
 def load_data_pair():
@@ -223,7 +274,7 @@ def load_data_pair():
                     df_albums_prev = pd.read_csv(prev_album_file)
                     df_albums_prev = standardize_columns(df_albums_prev, is_album=True)
             except:
-                pass # 如果加载旧文件失败，忽略，Change显示为0
+                pass 
             
         return df_songs, df_albums, meta_data, date_str, df_songs_prev, df_albums_prev
         
@@ -318,37 +369,15 @@ def get_spotify_card_html(label, song_name, value_text):
     </a>
     """
 
-def generate_random_predictions(df_songs, df_albums):
-    pool = []
-    if df_albums is not None and not df_albums.empty:
-        alb_sorted = df_albums.sort_values('Total_Num', ascending=False).reset_index(drop=True)
-        for i in range(len(alb_sorted)-1):
-            leader = alb_sorted.iloc[i]
-            chaser = alb_sorted.iloc[i+1]
-            gap = leader['Total_Num'] - chaser['Total_Num']
-            speed = chaser.get('Daily_Num', 0) - leader.get('Daily_Num', 0)
-            if speed > 0 and gap > 0:
-                days = gap / speed
-                if days < 2000:
-                    pool.append((f"💿 {chaser['Base_Name']} 🚀 {leader['Base_Name']}", f"差距 {gap//1000000}M | 约 {int(days)} 天"))
-    for _, row in df_songs.head(50).iterrows():
-        curr, inc = row['Streams_Num'], row.get('Daily_Num', 0)
-        if inc > 0:
-            next_goal = ((curr // 100000000) + 1) * 100000000
-            days = (next_goal - curr) / inc
-            if days < 365:
-                pool.append((f"🎵 {row['Song']} ✨ {next_goal/100000000:.1f}亿", f"还差 {(next_goal-curr)//1000}k | 约 {int(days)} 天"))
-    if len(pool) > 12: return random.sample(pool, 12)
-    else: return pool
-
 # --- 6. UI 主程序 ---
 with st.sidebar:
-    st.markdown("### 🦋 Ari-Stats 30.3 (Change)")
+    st.markdown("### 🦋 Ari-Stats 30.5 (Final)")
     st.caption(f"Theme: **{theme_name}**")
     theme_img = THEME_IMAGE_MAP.get(theme_name)
     if theme_img and os.path.exists(theme_img): st.image(theme_img, caption=f"{theme_name} Era", use_container_width=True)
     if os.path.exists("ARIANA.jpg"): st.image("ARIANA.jpg", caption="Ariana Grande", use_container_width=True)
     st.info("💡 数据源: GitHub Repository\n(读取 daily_data 文件夹最新上传)")
+    st.success("✅ 功能合并完成：\n- 横向水晶球 (1B目标)\n- 无Emoji专业布局\n- 精准算法")
 
 st.title(f"✨ Ariana Grande Data Universe ✨")
 
@@ -359,16 +388,14 @@ if final_songs_df is not None and today_meta is not None:
     
     # --- 1. 计算单曲较昨日变化 (Change) ---
     if prev_songs_df is not None:
-        # 合并今日和昨日数据，计算 Delta
         merged_songs = pd.merge(final_songs_df, prev_songs_df[['Song', 'Daily_Num']], on='Song', how='left', suffixes=('', '_Prev'))
-        merged_songs['Daily_Num_Prev'] = merged_songs['Daily_Num_Prev'].fillna(0) # 如果昨日无数据，视为0
+        merged_songs['Daily_Num_Prev'] = merged_songs['Daily_Num_Prev'].fillna(0)
         merged_songs['Change'] = merged_songs['Daily_Num'] - merged_songs['Daily_Num_Prev']
         final_songs_df = merged_songs
     else:
         final_songs_df['Change'] = 0
 
-    # --- 2. 关键修复：排序 ---
-    # 按照日增量从大到小排序，并重置索引
+    # --- 2. 排序 ---
     final_songs_df = final_songs_df.sort_values(by='Daily_Num', ascending=False).reset_index(drop=True)
     
     # --- 3. 计算专辑较昨日变化 (Change) ---
@@ -478,14 +505,82 @@ if final_songs_df is not None and today_meta is not None:
 
     st.divider()
 
-    st.subheader("🔮 未来水晶球")
-    preds = generate_random_predictions(final_songs_df, final_albums_df)
-    if preds:
-        chunk = 4
-        for i in range(0, len(preds), chunk):
-            cols = st.columns(chunk)
-            for j, (t, s) in enumerate(preds[i:i+chunk]):
-                with cols[j]: st.info(f"**{t}**\n\n_{s}_")
+    # --- 新版水晶球逻辑 (移植完成) ---
+    st.subheader("🔮 未来水晶球 (Next Billion Milestones)")
+    
+    target_albums_map = {
+        "Yours Truly": "Yours Truly",
+        "My Everything": "My Everything",
+        "Dangerous Woman": "Dangerous Woman",
+        "Sweetener": "Sweetener",
+        "thank u, next": "thank u, next",
+        "Positions": "Positions",
+        "eternal sunshine (deluxe)": "eternal sunshine deluxe: brighter days ahead"
+    }
+
+    if final_albums_df is not None:
+        crystal_ball_data = []
+        
+        for display_name, base_name_key in target_albums_map.items():
+            row = final_albums_df[final_albums_df['Base_Name'] == base_name_key]
+            
+            if not row.empty:
+                current_total = row.iloc[0]['Total_Num']
+                avg_7day = get_album_7day_average(base_name_key)
+                # 如果7日数据不足，使用当日数据作为Fallback
+                if avg_7day == 0: avg_7day = row.iloc[0]['Daily_Num']
+                
+                proj = calculate_milestone_projection_1B(current_total, avg_7day)
+                
+                if proj:
+                    crystal_ball_data.append({
+                        "Album": base_name_key, 
+                        "Display": display_name,
+                        "Total": current_total,
+                        "Avg": avg_7day,
+                        "Milestone": proj['milestone'],
+                        "Remaining": proj['remaining'],
+                        "Days": proj['days'],
+                        "Date": proj['date_str']
+                    })
+        
+        crystal_ball_data.sort(key=lambda x: x['Total'], reverse=True)
+        
+        for idx, item in enumerate(crystal_ball_data):
+            milestone_b_str = f"{item['Milestone'] / 1_000_000_000:.0f}B"
+            remaining_str = f"{item['Remaining']:,}"
+            avg_str = f"+{int(item['Avg']):,}"
+            current_b_str = f"{item['Total'] / 1_000_000_000:.3f} B" 
+            
+            if item['Days'] < 7300: 
+                days_str = f"{int(item['Days'])} Days"
+                date_display = item['Date']
+            else:
+                days_str = "N/A"
+                date_display = "---"
+
+            # HTML 无缩进渲染，防止BUG
+            card_html = f"""
+<div style="background: linear-gradient(to right, rgba(255,255,255,0.95), {secondary_color}15); border-left: 6px solid {primary_color}; border-radius: 10px; padding: 18px 25px; margin-bottom: 15px; box-shadow: 0 4px 12px rgba(0,0,0,0.06); font-family: 'Times New Roman', serif; display: flex; align-items: center; justify-content: space-between; color: #333;">
+    <div style="flex: 2; padding-right: 15px;">
+        <div style="font-size: 22px; font-weight: 900; color: {primary_color}; margin-bottom: 4px;"><span style="opacity:0.5; font-size:18px; margin-right:5px;">#{idx+1}</span>{item['Display']}</div>
+        <div style="font-size: 18px; font-weight: bold; color: #555;">Total: {current_b_str}</div>
+    </div>
+    <div style="flex: 1; text-align: center; border-left: 1px solid rgba(0,0,0,0.1); border-right: 1px solid rgba(0,0,0,0.1); padding: 0 10px;">
+        <div style="font-size: 14px; color: #888; font-weight: bold; margin-bottom: 2px;">NEXT GOAL</div>
+        <div style="font-size: 32px; font-weight: 900; color: {primary_color}; line-height: 1;">{milestone_b_str}</div>
+    </div>
+    <div style="flex: 1.2; text-align: right; padding-right: 20px;">
+        <div style="font-size: 16px; font-weight: bold; color: #444; margin-bottom: 4px;">Diff: {remaining_str}</div>
+        <div style="font-size: 16px; font-weight: bold; color: {primary_color};">Avg: {avg_str}/day</div>
+    </div>
+    <div style="flex: 1; text-align: right;">
+        <div style="font-size: 18px; font-weight: 900; color: #333; margin-bottom: 4px;">{days_str}</div>
+        <div style="font-size: 16px; font-weight: bold; color: #666;">{date_display}</div>
+    </div>
+</div>
+"""
+            st.markdown(card_html, unsafe_allow_html=True)
     
     st.divider()
 
@@ -516,7 +611,6 @@ if final_songs_df is not None and today_meta is not None:
         fig.update_layout(yaxis={'categoryorder':'total ascending'}, plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', font=dict(family="Times New Roman"))
         st.plotly_chart(fig, use_container_width=True, key="chart_songs_daily")
         
-        # 显示 Change 列
         st.dataframe(
             sub_df[['Song','Daily_Num','Change','Share']], 
             use_container_width=True,
@@ -568,7 +662,6 @@ if final_songs_df is not None and today_meta is not None:
             fig.update_traces(texttemplate='%{text:.2s}', textposition='outside') 
             st.plotly_chart(fig, use_container_width=True, key="chart_albums_daily")
             
-            # 显示 Change 列
             st.dataframe(
                 sub_df[['Base_Name','Daily_Num','Change','Daily_Share']], 
                 use_container_width=True,
