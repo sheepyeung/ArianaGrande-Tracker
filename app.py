@@ -379,7 +379,7 @@ with st.sidebar:
     if theme_img and os.path.exists(theme_img): st.image(theme_img, caption=f"{theme_name} Era", use_container_width=True)
     if os.path.exists("ARIANA.jpg"): st.image("ARIANA.jpg", caption="Ariana Grande", use_container_width=True)
     st.info("💡 数据源: GitHub Repository\n(读取 daily_data 文件夹最新上传)")
-    st.success("✅ 功能合并完成：\n- 横向水晶球 (1B目标)\n- 无Emoji专业布局\n- 精准算法")
+    st.success("✅ 功能合并完成：\n- 横向水晶球 (1B目标)\n- 无Emoji专业布局\n- 精准算法\n- 修复日增变化显示")
 
 st.title(f"✨ Ariana Grande Data Universe ✨")
 
@@ -413,6 +413,9 @@ if final_songs_df is not None and today_meta is not None:
     # 核心数据计算
     career_total = today_meta.get('career_total', 0)
     real_career_daily = final_songs_df['Daily_Num'].sum()
+    
+    # 修复：计算日增总变化量 (Sum of Changes)
+    real_daily_change = final_songs_df['Change'].sum()
 
     # 计算 Listeners 变化
     l_hist = get_listeners_history()
@@ -472,9 +475,12 @@ if final_songs_df is not None and today_meta is not None:
     
     # --- 核心UI修复区域：调整为4列布局，移除“总量冠军”和“专辑收录” ---
     c1, c2, c3, c4 = st.columns(4)
+    
+    # 计算 Delta String
+    delta_str = f"{real_daily_change:+.0f}" if real_daily_change != 0 else "持平"
      
     with c1: 
-        st.metric("📊 日增总量", f"{real_career_daily:,}", "Updated")
+        st.metric("📊 日增总量", f"{real_career_daily:,}", delta_str)
 
     with c2: 
         st.metric("🔥 最佳日增", top_song_d['Song'], f"+{top_song_d['Daily_Num']:,}")
