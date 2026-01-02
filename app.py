@@ -495,11 +495,42 @@ if final_songs_df is not None and today_meta is not None:
         st.metric("💎 破1亿(100M)", f"{count_100m} 首")
 
     st.write("") 
+# --- 修复开始：找到 UI 部分的这个 expander ---
     with st.expander("📈 点击查看：生涯日增历史趋势 (Total Daily Streams History)", expanded=False):
         hist_df = get_career_history()
+        
+        # ==========================================
+        # 🛡️ 补丁：强制修正最后一天的数据以匹配 Metric
+        # ==========================================
         if not hist_df.empty:
+            # 获取今天的日期字符串
+            today_str = datetime.now().strftime("%Y-%m-%d")
+            
+            # 获取历史数据中最后的时间点
+            last_date_in_df = hist_df.iloc[-1]['Date']
+            
+            # 情况1: 如果历史数据最后一天就是今天，直接覆盖数值，消除"两天累积"的尖峰
+            if last_date_in_df == today_str:
+                hist_df.at[hist_df.index[-1], 'Daily'] = real_career_daily
+            
+            # 情况2: 如果历史数据还没包含今天(比如刚运行)，手动追加今天的数据
+            else:
+                new_row = pd.DataFrame([{'Date': today_str, 'Daily': real_career_daily}])
+                hist_df = pd.concat([hist_df, new_row], ignore_index=True)
+        # ==========================================
+
+        if not hist_df.empty:
+            # height=450 保证高度，宽度自动填充
             fig_hist = px.line(hist_df, x='Date', y='Daily', markers=True, height=450)
-            fig_hist.update_layout(plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', margin=dict(l=0, r=0, t=20, b=0), font=dict(family="Times New Roman"), xaxis_title=None, yaxis_title=None, hovermode="x unified")
+            fig_hist.update_layout(
+                plot_bgcolor='rgba(0,0,0,0)', 
+                paper_bgcolor='rgba(0,0,0,0)', 
+                margin=dict(l=0, r=0, t=20, b=0), 
+                font=dict(family="Times New Roman"), 
+                xaxis_title=None, 
+                yaxis_title=None, 
+                hovermode="x unified"
+            )
             fig_hist.update_traces(line_color=primary_color, line_width=3)
             st.plotly_chart(fig_hist, use_container_width=True)
         else:
@@ -718,3 +749,4 @@ if final_songs_df is not None and today_meta is not None:
 
 else:
     st.info("👋 欢迎！请在 GitHub 仓库的 'daily_data' 文件夹中上传 *_songs.csv 和 *_meta.json 文件以开始显示数据。")
+
